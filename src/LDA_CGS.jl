@@ -288,4 +288,35 @@ function sample_Ndk(x::LDA)
     end
 end
 
+function run(x::LDA, corpus_train, corpus_test, burnin=400, sample=100)
+    #=
+    K: Number of topics
+    V: Size of vocabulary
+    corpus: We assume corpus[i] = [(word_id, Number of the word in document i), (, ), ...]
+    =#
+    
+    initialize_alpha(x, rand(x.K))
+    initialize_beta(x, rand())
+    initialize_topic(x, corpus_train)
+    x.PPL = 1000.0
+    x.S = 0
+
+    println("Burn-in (period=$burnin)...")
+    for i in 1:burnin
+        MCMC(x, corpus_train)
+        update_prior(x)
+        println("epoch=", i)
+    end
+
+    println("Sample from the posterior...")
+    for i in 1:sample
+        x.S += 1
+        MCMC(x, corpus_train)
+        update_prior(x)
+        PPL(x, corpus_test)
+        sample_Nkv(x)
+        sample_Ndk(x)
+        println("epoch=", i, ", PPL=", x.PPL)
+    end
+    end
 end
