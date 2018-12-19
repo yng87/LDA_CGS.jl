@@ -12,6 +12,8 @@ mutable struct LDA
     Nkv::Array{Int64,2}
     Ndk::Array{Int64,2}
     Nd::Array{Int64,1}
+    nonzeroNdkindex::Array{Array{Int64,1},1}
+    nonzeroNkvindex::Array{Array{Int64,1},1}
     z::Array{Array{Array{Int64,1},1},1} #z[d][iv] = [word_id, k_1, k_2, ...]
     alpha::Array{Float64,1}
     beta::Float64
@@ -52,6 +54,8 @@ function initialize_topic(x::LDA, corpus_train)
     x.Ndk = zeros(D, K)
     x.Nd = zeros(D)
     x.z = Array{Array{Int64,1},1}[]
+    x.nonzeroNdkindex = Array{Int64,1}[]
+    x.nonzeroNkvindex = Array{Int64,1}[]
     for d in 1:D
         corpus_d = corpus_train[d]
         push!(x.z, Array{Int64,1}[])
@@ -67,6 +71,24 @@ function initialize_topic(x::LDA, corpus_train)
                 x.Nd[d] += 1
             end
         end
+        
+        temp = Int64[]
+        for k in 1:K
+            if x.Ndk[d,k] != 0
+                push!(temp, k)
+            end
+        end
+        push!(x.nonzeroNdkindex, temp)
+    end
+
+    for v in 1:V
+        temp = Int64[]
+        for k in 1:K
+            if x.Nkv[k,v] != 0
+                push!(temp, k)
+            end
+        end
+        push!(x.nonzeroNkvindex, temp)
     end
 end
 
@@ -84,16 +106,13 @@ function subtract(x::LDA, d::Int64, v::Int64, kold::Int64)
     return
 end
 
-function update(x::LDA, d::Int64, v::Int64, knew::Int64, nonzeroNdkindex::Array{Int64,1})
+function update(x::LDA, d::Int64, v::Int64, knew::Int64)
     V = x.V
     x.s -= x.alpha[knew]*x.beta/(x.beta*V + x.Nk[knew])
     x.r -= x.beta*x.Ndk[d, knew]/(x.beta*V + x.Nk[knew])
     x.Nk[knew] += 1
     x.Ndk[d, knew] += 1
     x.Nkv[knew, v] += 1
-    if x.Ndk[d, knew] == 1.0
-        push!(nonzeroNdkindex, knew)
-    end
     x.c[knew] = (x.alpha[knew] + x.Ndk[d, knew])/(x.beta*V + x.Nk[knew])
     x.s += x.alpha[knew]*x.beta/(x.beta*V + x.Nk[knew])
     x.r += x.beta*x.Ndk[d, knew]/(x.beta*V + x.Nk[knew])
@@ -108,25 +127,15 @@ function MCMC(x::LDA, train_corpus)
     x.s = 0.0
     for k in 1:K
         x.s += x.alpha[k]*x.beta/(x.beta*V + x.Nk[k])
+        x.c[k] = (x.alpha[k])/(x.beta*V + x.Nk[k])
     end
     
     for d in 1:D
-        
-        # first, let's get nonzero indices for Ndk[d,:]
-        nonzeroNdkindex = Int64[]
-        
-        for k in 1:K
-            if x.Ndk[d,k] != 0
-                push!(nonzeroNdkindex, k)
-            end
-            x.c[k] = (x.alpha[k] + x.Ndk[d,k])/(x.beta*V + x.Nk[k])
-        end
-        
-        #println(nonzeroNdkindex)
-        
+
         x.r = 0.0
-        for k in nonzeroNdkindex
+        for k in x.nonzeroNdkindex[d]
             x.r += x.beta*x.Ndk[d,k]/(x.beta*V + x.Nk[k])
+            x.c[k] = (x.alpha[k] + x.Ndk[d,k])/(x.beta*V + x.Nk[k])
         end
         
         # Iterate for each word
@@ -140,18 +149,17 @@ function MCMC(x::LDA, train_corpus)
                 subtract(x, d, v, kold)
                 
                 # rearrange nonzero index for Ndk
-                if x.Ndk[d, kold] == 0.0
-                    filter!(e->e!=kold, nonzeroNdkindex)
+                if x.Ndk[d, kold] == 0
+                    filter!(e->e!=kold, x.nonzeroNdkindex[d])
+                end
+                if x.Nkv[kold, v] == 0
+                    filter!(e->e!=kold, x.nonzeroNkvindex[v])
                 end
                 
                 # Get nonzero index for Nkv
-                nonzeroNkvindex = Int64[]
                 q = 0.0
-                for k in 1:K
-                    if x.Nkv[k, v] !=0.0
-                        push!(nonzeroNkvindex, k)
-                        q += x.Nkv[k, v]*x.c[k]
-                    end
+                for k in x.nonzeroNkvindex[v]
+                    q += x.Nkv[k, v]*x.c[k]
                 end
                 
                 #MCMC
@@ -161,7 +169,7 @@ function MCMC(x::LDA, train_corpus)
                 if zsum < q
                     j = 1
                     while zsum > 0
-                        knew = nonzeroNkvindex[j]
+                        knew = x.nonzeroNkvindex[v][j]
                         zsum -= x.Nkv[knew, v]*x.c[knew]
                         j += 1
                     end
@@ -170,7 +178,7 @@ function MCMC(x::LDA, train_corpus)
                     j = 1
                     zsum = zsum - q
                     while zsum > 0
-                        knew = nonzeroNdkindex[j]
+                        knew = x.nonzeroNdkindex[d][j]
                         zsum -= x.beta*x.Ndk[d, knew]/(x.beta*V + x.Nk[knew])
                         j += 1
                     end
@@ -191,8 +199,18 @@ function MCMC(x::LDA, train_corpus)
                     print("sum=", zsum, ", r+s+q=", x.r+x.s+q,"\n")
                     print("s, r, q=", x.s, ",", x.r, ",", q, "\n")
                 end
+
+                update(x, d, v, knew)
                 
-                update(x, d, v, knew, nonzeroNdkindex)
+                if x.Ndk[d, knew] == 1
+                    push!(x.nonzeroNdkindex[d], knew)
+                end
+                if x.Nkv[knew, v] == 1
+                    push!(x.nonzeroNkvindex[v], knew)
+                end
+                for k in x.nonzeroNdkindex[d]
+                    x.c[k] = (x.alpha[k])/(x.beta*V + x.Nk[k])
+                end
                 x.z[d][iv][i] = knew
             end
         end
@@ -305,7 +323,7 @@ function run(x::LDA, corpus_train, corpus_test, burnin=400, sample=100)
     for i in 1:burnin
         MCMC(x, corpus_train)
         update_prior(x)
-        #println("epoch=", i)
+        println("epoch=", i)
     end
 
     println("Sampling from the posterior...")
@@ -316,7 +334,7 @@ function run(x::LDA, corpus_train, corpus_test, burnin=400, sample=100)
         PPL(x, corpus_test)
         sample_Nkv(x)
         sample_Ndk(x)
-        #println("epoch=", i, ", PPL=", x.PPL)
+        println("epoch=", i, ", PPL=", x.PPL)
     end
     end
 end
