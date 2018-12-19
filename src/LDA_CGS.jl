@@ -305,10 +305,10 @@ function run(x::LDA, corpus_train, corpus_test, burnin=400, sample=100)
     for i in 1:burnin
         MCMC(x, corpus_train)
         update_prior(x)
-        println("epoch=", i)
+        #println("epoch=", i)
     end
 
-    println("Sample from the posterior...")
+    println("Sampling from the posterior...")
     for i in 1:sample
         x.S += 1
         MCMC(x, corpus_train)
@@ -316,7 +316,7 @@ function run(x::LDA, corpus_train, corpus_test, burnin=400, sample=100)
         PPL(x, corpus_test)
         sample_Nkv(x)
         sample_Ndk(x)
-        println("epoch=", i, ", PPL=", x.PPL)
+        #println("epoch=", i, ", PPL=", x.PPL)
     end
     end
 end
