@@ -208,11 +208,12 @@ function MCMC(x::LDA, train_corpus)
                 if x.Nkv[knew, v] == 1
                     push!(x.nonzeroNkvindex[v], knew)
                 end
-                for k in x.nonzeroNdkindex[d]
-                    x.c[k] = (x.alpha[k])/(x.beta*V + x.Nk[k])
-                end
+
                 x.z[d][iv][i] = knew
             end
+        end
+        for k in x.nonzeroNdkindex[d]
+            x.c[k] = (x.alpha[k])/(x.beta*V + x.Nk[k])
         end
     end
 end
