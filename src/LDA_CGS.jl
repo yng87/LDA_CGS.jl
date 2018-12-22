@@ -90,11 +90,12 @@ function initialize_topic(x::LDA, corpus_train)
         push!(x.nonzeroNdkindex, temp)
     end
 
+    # Note!! when encoding topic k into integer, we use k bigins from 0
     for v in 1:V
         temp = Int64[]
         for k in 1:K
             if Nkv[k,v] != 0
-                push!(temp, Nkv[k,v]<<x.m + k)
+                push!(temp, (Nkv[k,v]<<x.m) + k-1)
             end
         end
         push!(x.Nkv, sort(temp, rev=true))
@@ -109,7 +110,7 @@ function subtract(x::LDA, d::Int64, v::Int64, kold::Int64)
     x.Nk[kold] -= 1
     x.Ndk[d, kold] -= 1
     for i in eachindex(x.Nkv[v])
-        if (x.Nkv[v][i] & x.mask) == kold
+        if ((x.Nkv[v][i] & x.mask) + 1) == kold
             x.Nkv[v][i] -= (1<<x.m)
             if x.Nkv[v][i]>>x.m == 0
                 deleteat!(x.Nkv[v], i)
@@ -132,7 +133,7 @@ function update(x::LDA, d::Int64, v::Int64, knew::Int64)
     x.Ndk[d, knew] += 1
     i = 1
     for N in x.Nkv[v]
-        if (N & x.mask) == knew
+        if ((N & x.mask) + 1) == knew
             x.Nkv[v][i] += (1<<x.m)
             break
         end
@@ -140,7 +141,7 @@ function update(x::LDA, d::Int64, v::Int64, knew::Int64)
     end
     
     if i==size(x.Nkv[v])[1]
-        push!(x.Nkv[v], (1<<x.m) + knew)
+        push!(x.Nkv[v], (1<<x.m) + knew - 1)
     else
         x.Nkv[v] = sort(x.Nkv[v], rev=true)
     end
@@ -185,11 +186,10 @@ function MCMC(x::LDA, train_corpus)
                     filter!(e->e!=kold, x.nonzeroNdkindex[d])
                 end
                     
-                # Get nonzero index for Nkv
                 q = 0.0
                 for int in x.Nkv[v]
-                    # k=int&mask, Nkv=int>>x.m
-                    q += (int>>x.m)*x.c[int&x.mask]
+                    # k=int&mask+1, Nkv=int>>x.m
+                    q += (int>>x.m)*x.c[(int&x.mask)+1]
                 end
                 
                 #MCMC
@@ -199,7 +199,7 @@ function MCMC(x::LDA, train_corpus)
                 if zsum < q
                     j = 1
                     while zsum > 0
-                        knew = x.Nkv[v][j] & x.mask
+                        knew = (x.Nkv[v][j] & x.mask) + 1
                         zsum -= (x.Nkv[v][j]>>x.m)*x.c[knew]
                         j += 1
                     end
@@ -253,21 +253,24 @@ function update_prior(x::LDA)
     alpha_sum = sum(x.alpha)
     
     beta_num=0.0
-    beta_den=0.0
     for k in 1:K
         alpha_num = 0.0
         alpha_den = 0.0
-        for v in 1:V
-            beta_num += digamma(x.Nkv[k,v]+x.beta)
-        end
-        beta_den += digamma(x.Nk[k]+x.beta*V)
         for d in 1:D
             alpha_num +=digamma(x.Ndk[d,k]+x.alpha[k])
             alpha_den += digamma(sum(x.Ndk[d,:])+alpha_sum)
         end
         x.alpha[k] = x.alpha[k]*(alpha_num-D*digamma(x.alpha[k]))/(alpha_den-D*digamma(alpha_sum))
     end
-    x.beta = x.beta*(beta_num-K*V*digamma(x.beta))/(V*beta_den-K*V*digamma(x.beta*V))
+
+    #beta
+    for v in 1:V
+        for int in x.Nkv[v]
+            beta_num += digamma((int>>x.m)+x.beta) - digamma(x.beta)
+        end
+    end
+    beta_den = sum(digamma.(x.Nk .+ (x.beta*V)))
+    x.beta = x.beta*beta_num/(V*beta_den-K*V*digamma(x.beta*V))
     return
 end
 
@@ -286,18 +289,39 @@ function PPL(x::LDA, corpus_test)
             push!(x.pdv, rand(size(words)[1]))
         end
     end
+
+    a = 0.0
+    b = zeros(K)
+    c = zeros(K)
+    for k in 1:K
+        a += x.beta*x.alpha[k]/(x.Nk[k]+x.beta*V)
+        b[k] = x.beta/(x.Nk[k]+x.beta*V)
+        c[k] = x.alpha[k]/(x.Nk[k]+x.beta*V)
+    end
     
     for d in eachindex(corpus_test)
         words = corpus_test[d] #assume Tuple, consisting of {v:Ndv}
+        overall = 1.0/(x.Nd[d]+alpha_sum)/x.S
+        # add a part
+        phi_temp = a * overall
+        # add b part, modify c part
+        for k in x.nonzeroNdkindex[d]
+            phi_temp += b[k] * overall * x.Ndk[d,k]
+            x.c[k] = (x.alpha[k] + x.Ndk[d,k])/(x.Nk[k]+x.beta*V)
+        end
         for iv in eachindex(words)
             (v, Ndv) = words[iv]
             x.pdv[d][iv] = (x.S-1.0)/x.S * x.pdv[d][iv]
-            for k in 1:K
-                phi_kv = (x.Nkv[k, v] + x.beta)/(x.Nk[k] + x.beta*V)
-                theta_dk = (x.Ndk[d,k] + x.alpha[k])/(x.Nd[d] + alpha_sum)
-                x.pdv[d][iv] += phi_kv * theta_dk /x.S
+            # add c part
+            for int in x.Nkv[v]
+                phi_temp += c[int&x.mask+1] * overall * (int>>x.m)
             end
+            x.pdv[d][iv] += phi_temp
             L += Ndv * log(x.pdv[d][iv])
+        end
+
+        for k in x.nonzeroNdkindex[d]
+            x.c[k] = x.alpha[k]/(x.Nk[k]+x.beta*V)
         end
     end
     x.PPL = exp(-L/N)
@@ -360,8 +384,8 @@ function run(x::LDA, corpus_train, corpus_test, burnin=400, sample=100)
         MCMC(x, corpus_train)
         update_prior(x)
         PPL(x, corpus_test)
-        sample_Nkv(x)
-        sample_Ndk(x)
+        #sample_Nkv(x)
+        #sample_Ndk(x)
         println("epoch=", i, ", PPL=", x.PPL)
     end
     end
