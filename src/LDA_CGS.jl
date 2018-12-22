@@ -8,12 +8,13 @@ mutable struct LDA
     K::Int64
     V::Int64
     D::Int64
+    m::Int64 #for 2^m > K
+    mask::Int64
+    Nkv::Array{Array{Int64,1},1}
     Nk::Array{Int64,1}
-    Nkv::Array{Int64,2}
     Ndk::Array{Int64,2}
     Nd::Array{Int64,1}
     nonzeroNdkindex::Array{Array{Int64,1},1}
-    nonzeroNkvindex::Array{Array{Int64,1},1}
     z::Array{Array{Array{Int64,1},1},1} #z[d][iv] = [word_id, k_1, k_2, ...]
     alpha::Array{Float64,1}
     beta::Float64
@@ -49,13 +50,21 @@ function initialize_topic(x::LDA, corpus_train)
     x.s = 0.0
     x.r = 0.0
     x.c = zeros(K)
-    x.Nk = zeros(K)
-    x.Nkv = zeros(K, V)
-    x.Ndk = zeros(D, K)
-    x.Nd = zeros(D)
+    x.Nk = zeros(Int64, K)
+    Nkv = zeros(Int64, K, V)
+    x.Nkv = Array{Int64, 1}[]
+    x.Ndk = zeros(Int64, D, K)
+    x.Nd = zeros(Int64, D)
     x.z = Array{Array{Int64,1},1}[]
     x.nonzeroNdkindex = Array{Int64,1}[]
-    x.nonzeroNkvindex = Array{Int64,1}[]
+
+    #Find m s.t. 2^m >K
+    x.m = 1
+    while 2^(x.m) < K
+        x.m += 1
+    end
+    x.mask = 2^(x.m) - 1
+    
     for d in 1:D
         corpus_d = corpus_train[d]
         push!(x.z, Array{Int64,1}[])
@@ -66,7 +75,7 @@ function initialize_topic(x::LDA, corpus_train)
                 k = rand(1:K)
                 push!(x.z[d][iv],k)
                 x.Ndk[d,k] += 1
-                x.Nkv[k,v] += 1
+                Nkv[k,v] += 1
                 x.Nk[k] += 1
                 x.Nd[d] += 1
             end
@@ -84,11 +93,11 @@ function initialize_topic(x::LDA, corpus_train)
     for v in 1:V
         temp = Int64[]
         for k in 1:K
-            if x.Nkv[k,v] != 0
-                push!(temp, k)
+            if Nkv[k,v] != 0
+                push!(temp, Nkv[k,v]<<x.m + k)
             end
         end
-        push!(x.nonzeroNkvindex, temp)
+        push!(x.Nkv, sort(temp, rev=true))
     end
 end
 
@@ -99,7 +108,16 @@ function subtract(x::LDA, d::Int64, v::Int64, kold::Int64)
     x.r -= x.beta*x.Ndk[d, kold]/(x.beta*V + x.Nk[kold])
     x.Nk[kold] -= 1
     x.Ndk[d, kold] -= 1
-    x.Nkv[kold, v] -= 1
+    for i in eachindex(x.Nkv[v])
+        if (x.Nkv[v][i] & x.mask) == kold
+            x.Nkv[v][i] -= (1<<x.m)
+            if x.Nkv[v][i]>>x.m == 0
+                deleteat!(x.Nkv[v], i)
+            end
+            break
+        end
+    end
+    x.Nkv[v] = sort(x.Nkv[v], rev=true)
     x.c[kold] = (x.alpha[kold] + x.Ndk[d, kold])/(x.beta*V + x.Nk[kold])
     x.s += x.alpha[kold]*x.beta/(x.beta*V + x.Nk[kold])
     x.r += x.beta*x.Ndk[d, kold]/(x.beta*V + x.Nk[kold])
@@ -112,7 +130,21 @@ function update(x::LDA, d::Int64, v::Int64, knew::Int64)
     x.r -= x.beta*x.Ndk[d, knew]/(x.beta*V + x.Nk[knew])
     x.Nk[knew] += 1
     x.Ndk[d, knew] += 1
-    x.Nkv[knew, v] += 1
+    i = 1
+    for N in x.Nkv[v]
+        if (N & x.mask) == knew
+            x.Nkv[v][i] += (1<<x.m)
+            break
+        end
+        i += 1
+    end
+    
+    if i==size(x.Nkv[v])[1]
+        push!(x.Nkv[v], (1<<x.m) + knew)
+    else
+        x.Nkv[v] = sort(x.Nkv[v], rev=true)
+    end
+
     x.c[knew] = (x.alpha[knew] + x.Ndk[d, knew])/(x.beta*V + x.Nk[knew])
     x.s += x.alpha[knew]*x.beta/(x.beta*V + x.Nk[knew])
     x.r += x.beta*x.Ndk[d, knew]/(x.beta*V + x.Nk[knew])
@@ -152,14 +184,12 @@ function MCMC(x::LDA, train_corpus)
                 if x.Ndk[d, kold] == 0
                     filter!(e->e!=kold, x.nonzeroNdkindex[d])
                 end
-                if x.Nkv[kold, v] == 0
-                    filter!(e->e!=kold, x.nonzeroNkvindex[v])
-                end
-                
+                    
                 # Get nonzero index for Nkv
                 q = 0.0
-                for k in x.nonzeroNkvindex[v]
-                    q += x.Nkv[k, v]*x.c[k]
+                for int in x.Nkv[v]
+                    # k=int&mask, Nkv=int>>x.m
+                    q += (int>>x.m)*x.c[int&x.mask]
                 end
                 
                 #MCMC
@@ -169,8 +199,8 @@ function MCMC(x::LDA, train_corpus)
                 if zsum < q
                     j = 1
                     while zsum > 0
-                        knew = x.nonzeroNkvindex[v][j]
-                        zsum -= x.Nkv[knew, v]*x.c[knew]
+                        knew = x.Nkv[v][j] & x.mask
+                        zsum -= (x.Nkv[v][j]>>x.m)*x.c[knew]
                         j += 1
                     end
                     
@@ -204,9 +234,6 @@ function MCMC(x::LDA, train_corpus)
                 
                 if x.Ndk[d, knew] == 1
                     push!(x.nonzeroNdkindex[d], knew)
-                end
-                if x.Nkv[knew, v] == 1
-                    push!(x.nonzeroNkvindex[v], knew)
                 end
 
                 x.z[d][iv][i] = knew
