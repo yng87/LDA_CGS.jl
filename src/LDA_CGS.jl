@@ -131,10 +131,10 @@ function update(x::LDA, d::Int64, v::Int64, knew::Int64)
     x.r -= x.beta*x.Ndk[d, knew]/(x.beta*V + x.Nk[knew])
     x.Nk[knew] += 1
     x.Ndk[d, knew] += 1
-    i = 1
+    i = 0
     for N in x.Nkv[v]
         if ((N & x.mask) + 1) == knew
-            x.Nkv[v][i] += (1<<x.m)
+            x.Nkv[v][i+1] += (1<<x.m)
             break
         end
         i += 1
@@ -162,7 +162,7 @@ function MCMC(x::LDA, train_corpus)
         x.s += x.alpha[k]*x.beta/(x.beta*V + x.Nk[k])
         x.c[k] = (x.alpha[k])/(x.beta*V + x.Nk[k])
     end
-    
+
     for d in 1:D
 
         x.r = 0.0
@@ -332,15 +332,17 @@ function sample_Nkv(x::LDA)
     V = x.V
     
     if x.S == 1
-        x.Nkv_mean = zeros(K, V)
+        x.Nkv_mean = zeros(Float64, K, V)
     end
-    
-    for k in 1:K
-        for v in 1:V
-            x.Nkv_mean[k, v] = 1.0/x.S*x.Nkv[k,v] + (x.S-1)/x.S*x.Nkv_mean[k,v]
+
+    for v in 1:V
+        for int in x.Nkv[v]
+            k = int&x.mask+1
+            x.Nkv_mean[k,v] = 1.0/x.S*(int>>x.m) + (x.S-1)/x.S*x.Nkv_mean[k,v]
         end
     end
 end
+
 
 function sample_Ndk(x::LDA)
     D = x.D
@@ -348,7 +350,7 @@ function sample_Ndk(x::LDA)
     V = x.V
     
     if x.S == 1
-        x.Ndk_mean = zeros(D, K)
+        x.Ndk_mean = zeros(Float64, D, K)
     end
     
     for d in 1:D
@@ -384,8 +386,8 @@ function run(x::LDA, corpus_train, corpus_test, burnin=400, sample=100)
         MCMC(x, corpus_train)
         update_prior(x)
         PPL(x, corpus_test)
-        #sample_Nkv(x)
-        #sample_Ndk(x)
+        sample_Nkv(x)
+        sample_Ndk(x)
         println("epoch=", i, ", PPL=", x.PPL)
     end
     end
