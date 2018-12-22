@@ -132,8 +132,8 @@ function update(x::LDA, d::Int64, v::Int64, knew::Int64)
     x.Nk[knew] += 1
     x.Ndk[d, knew] += 1
     i = 0
-    for N in x.Nkv[v]
-        if ((N & x.mask) + 1) == knew
+    for int in x.Nkv[v]
+        if ((int & x.mask) + 1) == knew
             x.Nkv[v][i+1] += (1<<x.m)
             break
         end
