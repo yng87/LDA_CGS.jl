@@ -20,6 +20,7 @@ mutable struct LDA
     beta::Float64
     s::Float64
     r::Float64
+    q::Float64
     c::Array{Float64,1}
     S::Int64 #Sampling number
     PPL::Float64
@@ -186,17 +187,17 @@ function MCMC(x::LDA, train_corpus)
                     filter!(e->e!=kold, x.nonzeroNdkindex[d])
                 end
                     
-                q = 0.0
+                x.q = 0.0
                 for int in x.Nkv[v]
                     # k=int&mask+1, Nkv=int>>x.m
-                    q += (int>>x.m)*x.c[(int&x.mask)+1]
+                    x.q += (int>>x.m)*x.c[(int&x.mask)+1]
                 end
                 
                 #MCMC
-                zsum = rand()*(x.s+x.r+q)
+                zsum = rand()*(x.s+x.r+x.q)
                 knew = 0
                 
-                if zsum < q
+                if zsum < x.q
                     j = 1
                     while zsum > 0
                         knew = (x.Nkv[v][j] & x.mask) + 1
@@ -204,17 +205,17 @@ function MCMC(x::LDA, train_corpus)
                         j += 1
                     end
                     
-                elseif zsum < x.r + q
+                elseif zsum < x.r + x.q
                     j = 1
-                    zsum = zsum - q
+                    zsum = zsum - x.q
                     while zsum > 0
                         knew = x.nonzeroNdkindex[d][j]
                         zsum -= x.beta*x.Ndk[d, knew]/(x.beta*V + x.Nk[knew])
                         j += 1
                     end
                     
-                elseif zsum <= x.r + q + x.s
-                    zsum = zsum - (q+x.r)
+                elseif zsum <= x.r + x.q + x.s
+                    zsum = zsum - (x.q+x.r)
                     knew = 0
                     for k in 1:K
                         zsum -= x.alpha[k]*x.beta/(x.beta*V + x.Nk[k])
@@ -226,8 +227,8 @@ function MCMC(x::LDA, train_corpus)
                     
                 else
                     print("something unexpected happened\n")
-                    print("sum=", zsum, ", r+s+q=", x.r+x.s+q,"\n")
-                    print("s, r, q=", x.s, ",", x.r, ",", q, "\n")
+                    print("sum=", zsum, ", r+s+q=", x.r+x.s+x.q,"\n")
+                    print("s, r, q=", x.s, ",", x.r, ",", x.q, "\n")
                 end
 
                 update(x, d, v, knew)
