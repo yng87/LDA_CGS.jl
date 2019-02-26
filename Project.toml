@@ -1,0 +1,14 @@
+name = "LDA_CGS"
+uuid = "8b03fa0e-3994-11e9-179b-21593925b643"
+authors = ["basspale <k.yanagi07@gmail.com>"]
+version = "0.1.0"
+
+[deps]
+SpecialFunctions = "276daf66-3868-5448-9aa4-cd146d93841b"
+JSON = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
+
+[extras]
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[targets]
+test = ["Test"]
