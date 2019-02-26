@@ -1,6 +1,13 @@
 # LDA for Julia
 Perform Collapsed Gibbs Sampling of Latent Dirichlet Allocation.
 
+## Installation
+```console
+$ julia
+julia> ]
+(v1.0) pkg> add https://github.com/basspale/LDA_CGS.jl.git
+```
+
 ## Topic model
 Latent Dirichlet Allocation (LDA) is the Bayesian method to analyze discrete data such as the set of documents, originally proposed in [[Blei et. al., 2003]](https://dl.acm.org/citation.cfm?id=944919.944937).
 LDA infers a latent topic of each word in every document.
@@ -11,7 +18,7 @@ The efficient method proposed in [[Yao et. al., 2009]](https://dl.acm.org/citati
 ## Input data structure
 
 The collection of documents, we call corpus, is assumed to take the form of D-dimensional array whose elements take the form
-```
+```julia
 corpus[d][i] = (v, Ndv)
 ```
 where 
@@ -25,10 +32,10 @@ Ndv: number of the word v appearing in d-th document
 ## Simple run
 
 Once you prepare corpus, you can analyze the topic by
-```
-include("LDA_CGS.jl")
-x = LDA_CGS.LDA(K, V)
-LDA_CGS.run(x, train_corpus, test_corpus, burnin, sample)
+```julia
+using LDA_CGS
+x = LDA(K, V)
+run(x, train_corpus, test_corpus, burnin, sample)
 ```
 The parameters are
 ```
