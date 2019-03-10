@@ -1,4 +1,8 @@
 module LDA_CGS
+
+export LDA, initialize_alpha, initialize_beta, initialize_topic, MCMC,
+    update_prior, PPL, sample_Nkv, sample_Ndk, run_LDA
+
 using SpecialFunctions
 
 mutable struct LDA
@@ -307,7 +311,7 @@ function sample_Ndk(x::LDA)
     end
 end
 
-function run(x::LDA, corpus_train, corpus_test, burnin=400, sample=100)
+function run_LDA(x::LDA, corpus_train, corpus_test, burnin=400, sample=100)
     #=
     K: Number of topics
     V: Size of vocabulary
